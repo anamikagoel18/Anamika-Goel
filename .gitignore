@@ -1,0 +1,29 @@
+# Python temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Local data & caches
+data/
+outputs/
+.streamlit/
+
+# Node/Frontend (Legacy but good to ignore)
+ui/node_modules/
+ui/dist/
+dist/
+
+# System files
+.DS_Store
+Thumbs.db
