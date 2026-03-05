@@ -31,68 +31,92 @@ class RecommendationService:
         self, preferences: UserPreference
     ) -> Tuple[List[Tuple[Restaurant, float]], str]:
         restaurants = self._repo.get_all()
+        candidates: List[Tuple[Restaurant, float]] = []
+        highest_relaxation = "none"
+        threshold = 3
         
+        def add_unique_candidates(filtered_list: List[Restaurant], level: str):
+            nonlocal highest_relaxation
+            if not filtered_list:
+                return False
+            
+            top_new = select_top_candidates(filtered_list, preferences)
+            existing_ids = {r.id for r, _ in candidates}
+            added_any = False
+            for r, score in top_new:
+                if r.id not in existing_ids:
+                    candidates.append((r, score))
+                    added_any = True
+            
+            if added_any and level != "none":
+                # Only update highest_relaxation if we actually found something new in this relaxed tier
+                # mapping tiers to descriptive levels for the LLM
+                tier_priority = {"none": 0, "price": 1, "rating": 2, "area": 3, "area_relaxed": 4, "neighborhood": 5}
+                if tier_priority.get(level, 0) > tier_priority.get(highest_relaxation, 0):
+                    highest_relaxation = level
+            return True
+
         # Tier 1: Strict
         filtered = filter_restaurants(restaurants, preferences)
-        if filtered:
-            return select_top_candidates(filtered, preferences), "none"
+        add_unique_candidates(filtered, "none")
+        if len(candidates) >= threshold:
+            return candidates[:preferences.limit], highest_relaxation
 
         # Tier 2: Relax Price
-        self._logger.info("No exact matches, relaxing price filter.")
+        self._logger.info("Not enough strict matches, relaxing price filter.")
         relaxed_prefs = preferences.model_copy()
         if relaxed_prefs.price_max is not None:
             relaxed_prefs.price_max *= 1.5
         filtered = filter_restaurants(restaurants, relaxed_prefs)
-        if filtered:
-            return select_top_candidates(filtered, preferences), "price"
+        add_unique_candidates(filtered, "price")
+        if len(candidates) >= threshold:
+            return candidates[:preferences.limit], highest_relaxation
 
         # Tier 3: Relax Rating
-        self._logger.info("No price match, relaxing rating filter.")
+        self._logger.info("Not enough matches, relaxing rating filter.")
         if relaxed_prefs.min_rating is not None:
             relaxed_prefs.min_rating = max(0, relaxed_prefs.min_rating - 0.5)
         filtered = filter_restaurants(restaurants, relaxed_prefs)
-        if filtered:
-            return select_top_candidates(filtered, preferences), "rating"
+        add_unique_candidates(filtered, "rating")
+        if len(candidates) >= threshold:
+            return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 4: Area Expansion (Strict - same cuisine, whole city)
-        self._logger.info("No local matches for cuisine, searching city-wide (strict constraints).")
+        # Tier 4: Area Expansion (Strict - whole city)
+        self._logger.info("Not enough local matches, searching city-wide.")
         city_prefs = relaxed_prefs.model_copy()
         city_prefs.area = None
         if city_prefs.location.lower() != "bangalore":
             city_prefs.location = "Bangalore"
-            
         filtered = filter_restaurants(restaurants, city_prefs)
-        if filtered:
-            return select_top_candidates(filtered, preferences), "area"
+        add_unique_candidates(filtered, "area")
+        if len(candidates) >= threshold:
+            return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 5: Area Expansion (Relaxed - same cuisine, whole city)
-        self._logger.info("No strict city-wide matches, absolute search for cuisine anywhere.")
+        # Tier 5: Area Expansion (Relaxed - city-wide)
+        self._logger.info("Not enough city-wide strict matches, broadening search.")
         anywhere_cuisine_prefs = UserPreference(
             location="Bangalore",
             cuisines=preferences.cuisines,
             limit=preferences.limit
         )
         filtered = filter_restaurants(restaurants, anywhere_cuisine_prefs)
-        if filtered:
-            return select_top_candidates(filtered, preferences), "area_relaxed"
+        add_unique_candidates(filtered, "area_relaxed")
+        if len(candidates) >= threshold:
+            return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 6: Neighborhood Favorites (any cuisine)
-        self._logger.info("No cuisine match found city-wide, falling back to local neighborhood favorites.")
+        # Tier 6: Neighborhood Fallback (any cuisine)
+        self._logger.info("Cuisine scarce, falling back to local favorites.")
         fallback_prefs = preferences.model_copy()
-        fallback_prefs.cuisines = [] # Ignore cuisine to find local favorites
-        
+        fallback_prefs.cuisines = []
         filtered = filter_restaurants(restaurants, fallback_prefs)
         
         if not filtered:
-            # Absolute local fallback if even favorites are too expensive/low rated
-            neighborhood_only = UserPreference(location=preferences.location, area=preferences.area, limit=preferences.limit)
+            neighborhood_only = UserPreference(location="Bangalore", area=preferences.area, limit=preferences.limit)
             filtered = filter_restaurants(restaurants, neighborhood_only)
-            
-        if filtered:
-            return select_top_candidates(filtered, preferences), "neighborhood"
+        
+        add_unique_candidates(filtered, "neighborhood")
 
-        # Final absolute fallback if somehow everything failed
-        return [], "none"
+        return candidates[:preferences.limit], highest_relaxation
 
     def list_restaurants(self) -> List[Restaurant]:
         """

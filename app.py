@@ -39,56 +39,53 @@ st.markdown("""
     }
     .res-card {
         background-color: white;
-        padding: 0;
+        padding: 20px;
         border-radius: 12px;
         border: 1px solid #e8e8e8;
         margin-bottom: 20px;
         transition: transform 0.2s;
-        overflow: hidden;
     }
     .res-card:hover {
         transform: translateY(-4px);
         box-shadow: 0 10px 20px rgba(0,0,0,0.05);
     }
-    .res-img {
-        width: 100%;
-        height: 180px;
-        object-fit: cover;
-        background-color: #eee;
-    }
-    .res-content {
-        padding: 15px;
-    }
     .res-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
     }
     .res-name {
-        font-size: 18px;
+        font-size: 20px;
         font-weight: 700;
         color: #1c1c1c;
     }
     .res-rating {
-        background-color: #24963f;
-        color: white;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 12px;
+        color: #24963f;
         font-weight: 700;
+        font-size: 16px;
     }
-    .res-meta {
-        font-size: 13px;
-        color: #696969;
-        margin-bottom: 10px;
-    }
-    .res-explanation {
-        font-size: 13px;
+    .res-cuisines {
+        font-size: 14px;
         color: #1c1c1c;
-        border-top: 1px dashed #e8e8e8;
-        padding-top: 10px;
-        line-height: 1.4;
+        margin-bottom: 6px;
+    }
+    .res-location-price {
+        font-size: 14px;
+        color: #696969;
+        margin-bottom: 15px;
+    }
+    .res-explanation-label {
+        font-weight: 700;
+        color: #1c1c1c;
+        margin-top: 15px;
+        font-size: 14px;
+    }
+    .res-explanation-text {
+        font-size: 14px;
+        color: #444;
+        line-height: 1.5;
+        margin-top: 4px;
     }
     .logo-text {
         font-size: 40px;
@@ -127,7 +124,8 @@ with st.sidebar:
     for r in service.list_restaurants():
         for c in r.cuisines:
             if c.strip(): all_cuisines.add(c.strip())
-    cuisines = st.multiselect("Cuisines", options=sorted(list(all_cuisines)))
+    cuisine_options = sorted(list(all_cuisines))
+    cuisine = st.selectbox("Cuisine", options=["All"] + cuisine_options, index=0)
     
     # Price
     price_max = st.slider("Max Budget (for two)", min_value=100, max_value=10000, value=2000, step=100)
@@ -138,14 +136,14 @@ with st.sidebar:
     search_clicked = st.button("Find Recommendations")
 
 # Main Content
-if search_clicked or (area != "All" or cuisines):
+if search_clicked or (area != "All" or cuisine != "All"):
     with st.spinner("Generating personalized recommendations..."):
         prefs = UserPreference(
             location="Bangalore",
             area=area if area != "All" else None,
             price_max=float(price_max),
             min_rating=float(min_rating),
-            cuisines=cuisines,
+            cuisines=[cuisine] if cuisine != "All" else [],
             limit=6
         )
         
@@ -156,36 +154,33 @@ if search_clicked or (area != "All" or cuisines):
         else:
             st.subheader(f"Top Matches in {area if area != 'All' else 'Bangalore'}")
             
-            # Display in columns (3 per row)
-            cols = st.columns(3)
+            # Display in columns (2 per row for more text room)
+            cols = st.columns(2)
             restaurant_by_id = {r.id: r for r in service.list_restaurants()}
             
             for i, rec in enumerate(recs):
                 restaurant = restaurant_by_id.get(rec.restaurant_id)
                 if not restaurant: continue
                 
-                col = cols[i % 3]
+                col = cols[i % 2]
                 
                 # Render Card
                 with col:
-                    # Basic placeholder logic for image (mimicking Vite UI)
-                    img_url = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=500&q=80"
-                    
+                    cuisine_list = " &bull; ".join(restaurant.cuisines[:4])
                     st.markdown(f"""
                     <div class="res-card">
-                        <img src="{img_url}" class="res-img">
-                        <div class="res-content">
-                            <div class="res-header">
-                                <span class="res-name">{restaurant.name}</span>
-                                <span class="res-rating">{restaurant.rating} ★</span>
-                            </div>
-                            <div class="res-meta">
-                                {", ".join(restaurant.cuisines[:3])}<br>
-                                ₹{int(restaurant.average_cost_for_two or 0)} for two
-                            </div>
-                            <div class="res-explanation">
-                                {rec.explanation}
-                            </div>
+                        <div class="res-header">
+                            <span class="res-name">{restaurant.name}</span>
+                            <span class="res-rating">⭐ {restaurant.rating}</span>
+                        </div>
+                        <div class="res-cuisines">{cuisine_list}</div>
+                        <div class="res-location-price">
+                            📍 {restaurant.area}, {restaurant.city}<br>
+                            ₹{int(restaurant.average_cost_for_two or 0)} for two
+                        </div>
+                        <div class="res-explanation-label">Explanation:</div>
+                        <div class="res-explanation-text">
+                            {rec.explanation}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -195,22 +190,24 @@ else:
     
     # Show some trending local spots (Indiranagar)
     st.markdown("### Trending in Indiranagar")
-    trending_prefs = UserPreference(location="Bangalore", area="Indiranagar", limit=3)
+    trending_prefs = UserPreference(location="Bangalore", area="Indiranagar", limit=4)
     trending_recs = service.get_recommendations(trending_prefs)
     
-    cols = st.columns(3)
+    cols = st.columns(2)
     restaurant_by_id = {r.id: r for r in service.list_restaurants()}
     for i, rec in enumerate(trending_recs):
         restaurant = restaurant_by_id.get(rec.restaurant_id)
         if restaurant:
-            with cols[i]:
+            with cols[i % 2]:
+                cuisine_list = " &bull; ".join(restaurant.cuisines[:3])
                 st.markdown(f"""
                 <div class="res-card">
-                    <img src="https://images.unsplash.com/photo-1552566626-52f8b828add9?w=500&q=80" class="res-img">
-                    <div class="res-content">
+                    <div class="res-header">
                         <span class="res-name">{restaurant.name}</span>
-                        <div class="res-meta">{", ".join(restaurant.cuisines[:2])}</div>
+                        <span class="res-rating">⭐ {restaurant.rating}</span>
                     </div>
+                    <div class="res-cuisines">{cuisine_list}</div>
+                    <div class="res-location-price">📍 {restaurant.area}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
