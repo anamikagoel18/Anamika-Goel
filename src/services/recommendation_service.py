@@ -49,71 +49,65 @@ class RecommendationService:
                     added_any = True
             
             if added_any and level != "none":
-                # Only update highest_relaxation if we actually found something new in this relaxed tier
-                # mapping tiers to descriptive levels for the LLM
-                tier_priority = {"none": 0, "price": 1, "rating": 2, "area": 3, "area_relaxed": 4, "neighborhood": 5}
+                tier_priority = {
+                    "none": 0, 
+                    "price": 1, 
+                    "rating": 2, 
+                    "area": 3, 
+                    "area_price": 4, 
+                    "area_relaxed": 5, 
+                    "neighborhood": 6
+                }
                 if tier_priority.get(level, 0) > tier_priority.get(highest_relaxation, 0):
                     highest_relaxation = level
             return True
 
-        # Tier 1: Strict
+        # Pre-calculate relaxed values
+        orig_price = preferences.price_max
+        relaxed_price = orig_price * 1.5 if orig_price else None
+        orig_rating = preferences.min_rating
+        relaxed_rating = max(0, orig_rating - 0.5) if orig_rating else None
+
+        # 1. Local Strict
         filtered = filter_restaurants(restaurants, preferences)
         add_unique_candidates(filtered, "none")
-        if len(candidates) >= threshold:
-            return candidates[:preferences.limit], highest_relaxation
+        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 2: Relax Price
-        self._logger.info("Not enough strict matches, relaxing price filter.")
-        relaxed_prefs = preferences.model_copy()
-        if relaxed_prefs.price_max is not None:
-            relaxed_prefs.price_max *= 1.5
-        filtered = filter_restaurants(restaurants, relaxed_prefs)
-        add_unique_candidates(filtered, "price")
-        if len(candidates) >= threshold:
-            return candidates[:preferences.limit], highest_relaxation
+        # 2. Local Price Relaxed
+        if relaxed_price:
+            p2 = preferences.model_copy(update={"price_max": relaxed_price})
+            add_unique_candidates(filter_restaurants(restaurants, p2), "price")
+            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 3: Relax Rating
-        self._logger.info("Not enough matches, relaxing rating filter.")
-        if relaxed_prefs.min_rating is not None:
-            relaxed_prefs.min_rating = max(0, relaxed_prefs.min_rating - 0.5)
-        filtered = filter_restaurants(restaurants, relaxed_prefs)
-        add_unique_candidates(filtered, "rating")
-        if len(candidates) >= threshold:
-            return candidates[:preferences.limit], highest_relaxation
+        # 3. Local Rating Relaxed
+        if relaxed_rating:
+            p3 = preferences.model_copy(update={"price_max": relaxed_price, "min_rating": relaxed_rating})
+            add_unique_candidates(filter_restaurants(restaurants, p3), "rating")
+            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 4: Area Expansion (Strict - whole city)
-        self._logger.info("Not enough local matches, searching city-wide.")
-        city_prefs = relaxed_prefs.model_copy()
-        city_prefs.area = None
-        if city_prefs.location.lower() != "bangalore":
-            city_prefs.location = "Bangalore"
-        filtered = filter_restaurants(restaurants, city_prefs)
-        add_unique_candidates(filtered, "area")
-        if len(candidates) >= threshold:
-            return candidates[:preferences.limit], highest_relaxation
+        # 4. City-wide Strict
+        p4 = preferences.model_copy(update={"area": None})
+        add_unique_candidates(filter_restaurants(restaurants, p4), "area")
+        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 5: Area Expansion (Relaxed - city-wide)
-        self._logger.info("Not enough city-wide strict matches, broadening search.")
-        anywhere_cuisine_prefs = UserPreference(
-            location="Bangalore",
-            cuisines=preferences.cuisines,
-            limit=preferences.limit
-        )
-        filtered = filter_restaurants(restaurants, anywhere_cuisine_prefs)
-        add_unique_candidates(filtered, "area_relaxed")
-        if len(candidates) >= threshold:
-            return candidates[:preferences.limit], highest_relaxation
+        # 5. City-wide Price Relaxed
+        if relaxed_price:
+            p5 = preferences.model_copy(update={"area": None, "price_max": relaxed_price})
+            add_unique_candidates(filter_restaurants(restaurants, p5), "area_price")
+            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # Tier 6: Neighborhood Fallback (any cuisine)
-        self._logger.info("Cuisine scarce, falling back to local favorites.")
-        fallback_prefs = preferences.model_copy()
-        fallback_prefs.cuisines = []
-        filtered = filter_restaurants(restaurants, fallback_prefs)
-        
+        # 6. City-wide Rating Relaxed (Cuisine is the only anchor left)
+        p6 = preferences.model_copy(update={"area": None, "price_max": relaxed_price, "min_rating": relaxed_rating})
+        add_unique_candidates(filter_restaurants(restaurants, p6), "area_relaxed")
+        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+
+        # 7. Neighborhood Fallback (Any Cuisine)
+        p7 = preferences.model_copy(update={"cuisines": []})
+        filtered = filter_restaurants(restaurants, p7)
         if not filtered:
-            neighborhood_only = UserPreference(location="Bangalore", area=preferences.area, limit=preferences.limit)
-            filtered = filter_restaurants(restaurants, neighborhood_only)
-        
+            # Absolute fallback if neighborhood favoritos are also restricted
+            p7_alt = UserPreference(location="Bangalore", area=preferences.area, limit=preferences.limit)
+            filtered = filter_restaurants(restaurants, p7_alt)
         add_unique_candidates(filtered, "neighborhood")
 
         return candidates[:preferences.limit], highest_relaxation

@@ -63,8 +63,10 @@ class LlmClient:
             relaxation_note = "Note: We slightly relaxed the minimum rating to find matches in this neighborhood."
         elif relaxation_level == "area":
             relaxation_note = "Note: I couldn't find any restaurants serving these specific cuisines in your neighborhood, so I looked in nearby areas of Bangalore to find you the best matches."
+        elif relaxation_level == "area_price":
+            relaxation_note = "Note: I couldn't find matches for this cuisine within your exact budget or neighborhood, so I looked in nearby areas with slightly relaxed pricing."
         elif relaxation_level == "area_relaxed":
-            relaxation_note = "Note: I couldn't find matches for these cuisines within your exact budget or neighborhood, so I've found the best options available elsewhere in Bangalore."
+            relaxation_note = "Note: I couldn't find matches for this cuisine within your exact criteria or neighborhood, so I've found the best options available elsewhere in Bangalore."
         elif relaxation_level == "neighborhood":
             relaxation_note = "Note: I couldn't find an exact match for your cuisines here, so I've hand-picked the top-rated local favorites in your area that match your other preferences."
 
