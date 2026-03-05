@@ -101,19 +101,24 @@ class LlmClient:
         # surface the top N candidates with a generic explanation so the user
         # always sees something.
         if not merged:
-            fallback_note = "Top match based on your location and preferences."
+            base_fallback = "Top match based on your location and preferences."
             if relaxation_level == "price":
-                fallback_note = "Slightly relaxed your price range to find these great options."
+                base_fallback = "Slightly relaxed your price range to find these great options."
             elif relaxation_level == "rating":
-                fallback_note = "Slightly relaxed the minimum rating to find matches in this area."
+                base_fallback = "Slightly relaxed the minimum rating to find matches in this area."
             elif relaxation_level == "neighborhood":
-                fallback_note = "Found the best local alternatives since your exact cuisine wasn't available."
+                base_fallback = "Found the best local alternatives since your exact cuisine wasn't available."
             
+            # Ensure transparency note is present even in non-LLM fallback
+            final_fallback = base_fallback
+            if relaxation_note and relaxation_note not in final_fallback:
+                final_fallback = f"{relaxation_note} {base_fallback}"
+
             merged = [
                 Recommendation(
                     restaurant_id=r.id,
                     score=score,
-                    explanation=fallback_note,
+                    explanation=final_fallback,
                 )
                 for r, score in candidates
             ]
