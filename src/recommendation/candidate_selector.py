@@ -17,7 +17,14 @@ def select_top_candidates(
     - Return only the top N based on the user's limit.
     """
     scored = score_restaurants(restaurants, preferences)
-    scored.sort(key=lambda pair: pair[1], reverse=True)
+    # Sort primarily by rating, then by popularity (votes)
+    scored.sort(
+        key=lambda pair: (
+            pair[0].rating or 0.0,
+            pair[0].votes or 0
+        ),
+        reverse=True
+    )
 
     limit = preferences.limit
     return scored[:limit]

@@ -134,6 +134,18 @@ class RecommendationService:
         recommendations = self._llm_client.generate_recommendations(
             preferences, candidates, relaxation_level=relaxation_level
         )
+        
+        # Final ranking step: strictly sort by rating (primary) and votes (secondary)
+        # to ensure the most premium/popular choices appear first.
+        restaurant_map = {r.id: r for r in self.list_restaurants()}
+        recommendations.sort(
+            key=lambda r: (
+                restaurant_map[r.restaurant_id].rating or 0.0,
+                restaurant_map[r.restaurant_id].votes or 0
+            ),
+            reverse=True
+        )
+        
         self._logger.info("Generated %d recommendations", len(recommendations))
         return recommendations
 
