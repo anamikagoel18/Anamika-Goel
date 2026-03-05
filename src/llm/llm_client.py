@@ -58,9 +58,9 @@ class LlmClient:
             0: "", # Strict Match
             1: "Note: We slightly relaxed your price range to find this option in your neighborhood.",
             2: "Note: We slightly relaxed your minimum rating to find this option in your neighborhood.",
-            3: "Note: searching across all of Bangalore to find your exact cuisine and rating.",
-            4: "Note: expanding search city-wide with relaxed budget/rating to find the best available matches.",
-            5: "Note: I couldn't find an exact match for your cuisines here, so I've hand-picked this top-rated local favorite in your area."
+            10: "Note: searching across all of Bangalore to find your exact cuisine and rating.",
+            11: "Note: expanding search city-wide with relaxed budget to find matches for your exact cuisine.",
+            20: "Note: I've looked across all of Bangalore to find the highest-rated restaurants that fit your general preferences."
         }
 
         candidate_lookup = {r.id: (r, score, tier) for r, score, tier in candidates}

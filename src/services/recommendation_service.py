@@ -31,15 +31,10 @@ class RecommendationService:
         self, preferences: UserPreference
     ) -> List[Tuple[Restaurant, float, int]]:
         """
-        Builds candidates following a strict 6-tier hierarchy:
-        1. Local Strict
-        2. Local Price Relaxed
-        3. Local Rating Relaxed
-        4. City-wide Strict
-        5. City-wide Relaxed (Price & Rating)
-        6. Neighborhood Favorites (Any Cuisine)
-        
-        Returns a list of (Restaurant, Score, TierIndex).
+        Builds candidates following strict cuisine/rating rules:
+        - If Cuisine is selected: STRICT cuisine and rating match.
+        - Tiers: Local -> City-wide -> Stop.
+        - If 'All' (Empty list): 6-tier fallback logic.
         """
         restaurants = self._repo.get_all()
         candidates: List[Tuple[Restaurant, float, int]] = []
@@ -61,39 +56,59 @@ class RecommendationService:
         # Pre-calculate relaxed values
         orig_price = preferences.price_max
         relaxed_price = orig_price * 1.5 if orig_price else None
-        orig_rating = preferences.min_rating or 4.0
-        relaxed_rating = max(0, orig_rating - 0.5)
+        
+        # Branch based on whether a specific cuisine is selected
+        has_specific_cuisine = len(preferences.cuisines) > 0
 
-        # Tier 1: Strict Match (Neighborhood, Cuisine, Budget, Rating)
-        add_tier_candidates(filter_restaurants(restaurants, preferences), 0)
-        if len(candidates) >= threshold: return candidates[:preferences.limit]
-
-        # Tier 2: Price Relaxation (Local, Cuisine, Rating, Relaxed Price)
-        if relaxed_price:
-            p2 = preferences.model_copy(update={"price_max": relaxed_price})
-            add_tier_candidates(filter_restaurants(restaurants, p2), 1)
+        if has_specific_cuisine:
+            # --- STRICT CUISINE MODE ---
+            # Tier 0: Local Strict
+            add_tier_candidates(filter_restaurants(restaurants, preferences), 0)
             if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # Tier 3: Rating Relaxation (Local, Cuisine, Budget, Relaxed Rating)
-        p3 = preferences.model_copy(update={"min_rating": relaxed_rating})
-        add_tier_candidates(filter_restaurants(restaurants, p3), 2)
-        if len(candidates) >= threshold: return candidates[:preferences.limit]
+            # Tier 1: Local Price Relaxed
+            if relaxed_price:
+                p1 = preferences.model_copy(update={"price_max": relaxed_price})
+                add_tier_candidates(filter_restaurants(restaurants, p1), 1)
+                if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # Tier 4: Area Expansion Strict (City-wide, Cuisine, Budget, Rating)
-        p4 = preferences.model_copy(update={"area": None})
-        add_tier_candidates(filter_restaurants(restaurants, p4), 3)
-        if len(candidates) >= threshold: return candidates[:preferences.limit]
+            # Tier 10: City-wide Strict (Exact Cuisine)
+            p2 = preferences.model_copy(update={"area": None})
+            add_tier_candidates(filter_restaurants(restaurants, p2), 10)
+            if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # Tier 5: Area Expansion Relaxed (City-wide, Cuisine, Relaxed Price & Rating)
-        p5 = preferences.model_copy(update={"area": None, "price_max": relaxed_price, "min_rating": relaxed_rating})
-        add_tier_candidates(filter_restaurants(restaurants, p5), 4)
-        if len(candidates) >= threshold: return candidates[:preferences.limit]
+            # Tier 11: City-wide Price Relaxed (Exact Cuisine)
+            if relaxed_price:
+                p3 = preferences.model_copy(update={"area": None, "price_max": relaxed_price})
+                add_tier_candidates(filter_restaurants(restaurants, p3), 11)
 
-        # Tier 6: Neighborhood Favorites (Local, Any Cuisine, Budget, Rating)
-        p6 = preferences.model_copy(update={"cuisines": []})
-        add_tier_candidates(filter_restaurants(restaurants, p6), 5)
+            return candidates[:preferences.limit]
 
-        return candidates[:preferences.limit]
+        else:
+            # --- BROAD DISCOVERY MODE ("All" Cuisines) ---
+            orig_rating = preferences.min_rating or 4.0
+            relaxed_rating = max(0, orig_rating - 0.5)
+
+            # Tier 0: Local Strict (Area, Any Cuisine, Budget, Rating)
+            add_tier_candidates(filter_restaurants(restaurants, preferences), 0)
+            if len(candidates) >= threshold: return candidates[:preferences.limit]
+
+            # Tier 1: Local Price Relaxed
+            if relaxed_price:
+                p1 = preferences.model_copy(update={"price_max": relaxed_price})
+                add_tier_candidates(filter_restaurants(restaurants, p1), 1)
+                if len(candidates) >= threshold: return candidates[:preferences.limit]
+
+            # Tier 2: Local Rating Relaxed
+            p2 = preferences.model_copy(update={"min_rating": relaxed_rating})
+            add_tier_candidates(filter_restaurants(restaurants, p2), 2)
+            if len(candidates) >= threshold: return candidates[:preferences.limit]
+
+            # Tier 20: City-wide Broad (Any Cuisine, Budget, Rating)
+            p3 = preferences.model_copy(update={"area": None})
+            add_tier_candidates(filter_restaurants(restaurants, p3), 20)
+
+            return candidates[:preferences.limit]
 
     def list_restaurants(self) -> List[Restaurant]:
         """

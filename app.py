@@ -150,7 +150,10 @@ if search_clicked or (area != "All" or cuisine != "All"):
         recs = service.get_recommendations(prefs)
         
         if not recs:
-            st.warning("No restaurants found matching your criteria. Try relaxing your filters!")
+            if cuisine != "All":
+                st.warning(f"No restaurants found for {cuisine} within the selected rating and price across Bangalore.")
+            else:
+                st.warning("No restaurants found matching your criteria. Try relaxing your filters!")
         else:
             st.subheader(f"Top Matches in {area if area != 'All' else 'Bangalore'}")
             
