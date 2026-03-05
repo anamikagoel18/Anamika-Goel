@@ -36,7 +36,10 @@ def filter_restaurants(
 
         # Minimum rating
         if preferences.min_rating is not None:
-            if restaurant.rating is None or restaurant.rating < preferences.min_rating:
+            # Explicitly cast to float to avoid any hidden type mismatches
+            current_rating = float(restaurant.rating or 0.0)
+            required_rating = float(preferences.min_rating)
+            if current_rating < required_rating:
                 continue
 
         # Price range (if provided)

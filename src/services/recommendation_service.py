@@ -29,88 +29,71 @@ class RecommendationService:
 
     def _build_candidates(
         self, preferences: UserPreference
-    ) -> Tuple[List[Tuple[Restaurant, float]], str]:
+    ) -> List[Tuple[Restaurant, float, int]]:
+        """
+        Builds candidates following a strict 6-tier hierarchy:
+        1. Local Strict
+        2. Local Price Relaxed
+        3. Local Rating Relaxed
+        4. City-wide Strict
+        5. City-wide Relaxed (Price & Rating)
+        6. Neighborhood Favorites (Any Cuisine)
+        
+        Returns a list of (Restaurant, Score, TierIndex).
+        """
         restaurants = self._repo.get_all()
-        candidates: List[Tuple[Restaurant, float]] = []
-        highest_relaxation = "none"
+        candidates: List[Tuple[Restaurant, float, int]] = []
         threshold = 3
         
-        def add_unique_candidates(filtered_list: List[Restaurant], level: str):
-            nonlocal highest_relaxation
+        def add_tier_candidates(filtered_list: List[Restaurant], tier_index: int):
             if not filtered_list:
                 return False
             
             top_new = select_top_candidates(filtered_list, preferences)
-            existing_ids = {r.id for r, _ in candidates}
+            existing_ids = {r.id for r, _, _ in candidates}
             added_any = False
             for r, score in top_new:
                 if r.id not in existing_ids:
-                    candidates.append((r, score))
+                    candidates.append((r, score, tier_index))
                     added_any = True
-            
-            if added_any and level != "none":
-                tier_priority = {
-                    "none": 0, 
-                    "price": 1, 
-                    "area": 2, 
-                    "area_price": 3, 
-                    "neighborhood_favorites": 4,
-                    "neighborhood_favorites_price": 5,
-                    "global_favorites": 6,
-                    "rating_relaxed": 7
-                }
-                if tier_priority.get(level, 0) > tier_priority.get(highest_relaxation, 0):
-                    highest_relaxation = level
-            return True
+            return added_any
 
         # Pre-calculate relaxed values
         orig_price = preferences.price_max
         relaxed_price = orig_price * 1.5 if orig_price else None
+        orig_rating = preferences.min_rating or 4.0
+        relaxed_rating = max(0, orig_rating - 0.5)
 
-        # 1. Local Strict (Neighborhood, Cuisine, Price, Rating)
-        filtered = filter_restaurants(restaurants, preferences)
-        add_unique_candidates(filtered, "none")
-        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+        # Tier 1: Strict Match (Neighborhood, Cuisine, Budget, Rating)
+        add_tier_candidates(filter_restaurants(restaurants, preferences), 0)
+        if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # 2. Local Price Relaxed
+        # Tier 2: Price Relaxation (Local, Cuisine, Rating, Relaxed Price)
         if relaxed_price:
             p2 = preferences.model_copy(update={"price_max": relaxed_price})
-            add_unique_candidates(filter_restaurants(restaurants, p2), "price")
-            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+            add_tier_candidates(filter_restaurants(restaurants, p2), 1)
+            if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # 3. City-wide Strict
-        p3 = preferences.model_copy(update={"area": None})
-        add_unique_candidates(filter_restaurants(restaurants, p3), "area")
-        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+        # Tier 3: Rating Relaxation (Local, Cuisine, Budget, Relaxed Rating)
+        p3 = preferences.model_copy(update={"min_rating": relaxed_rating})
+        add_tier_candidates(filter_restaurants(restaurants, p3), 2)
+        if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # 4. City-wide Price Relaxed
-        if relaxed_price:
-            p4 = preferences.model_copy(update={"area": None, "price_max": relaxed_price})
-            add_unique_candidates(filter_restaurants(restaurants, p4), "area_price")
-            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+        # Tier 4: Area Expansion Strict (City-wide, Cuisine, Budget, Rating)
+        p4 = preferences.model_copy(update={"area": None})
+        add_tier_candidates(filter_restaurants(restaurants, p4), 3)
+        if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # 5. Neighborhood Favorites (Neighborhood, Any Cuisine, Strict Price, Strict Rating)
-        p5 = preferences.model_copy(update={"cuisines": []})
-        add_unique_candidates(filter_restaurants(restaurants, p5), "neighborhood_favorites")
-        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+        # Tier 5: Area Expansion Relaxed (City-wide, Cuisine, Relaxed Price & Rating)
+        p5 = preferences.model_copy(update={"area": None, "price_max": relaxed_price, "min_rating": relaxed_rating})
+        add_tier_candidates(filter_restaurants(restaurants, p5), 4)
+        if len(candidates) >= threshold: return candidates[:preferences.limit]
 
-        # 6. Neighborhood Favorites Price Relaxed (Neighborhood, Any Cuisine, Relaxed Price, Strict Rating)
-        if relaxed_price:
-            p6 = preferences.model_copy(update={"cuisines": [], "price_max": relaxed_price})
-            add_unique_candidates(filter_restaurants(restaurants, p6), "neighborhood_favorites_price")
-            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+        # Tier 6: Neighborhood Favorites (Local, Any Cuisine, Budget, Rating)
+        p6 = preferences.model_copy(update={"cuisines": []})
+        add_tier_candidates(filter_restaurants(restaurants, p6), 5)
 
-        # 7. Global Favorites (City-wide, Any Cuisine, Strict Price, Strict Rating)
-        p7 = preferences.model_copy(update={"area": None, "cuisines": []})
-        add_unique_candidates(filter_restaurants(restaurants, p7), "global_favorites")
-        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
-
-        # 8. Last Resort (Global Relaxed Rating - drop constraints to find anything)
-        low_rating = max(0, (preferences.min_rating or 4.0) - 1.0)
-        p8 = preferences.model_copy(update={"area": None, "cuisines": [], "price_max": relaxed_price, "min_rating": low_rating})
-        add_unique_candidates(filter_restaurants(restaurants, p8), "rating_relaxed")
-
-        return candidates[:preferences.limit], highest_relaxation
+        return candidates[:preferences.limit]
 
     def list_restaurants(self) -> List[Restaurant]:
         """
@@ -118,26 +101,32 @@ class RecommendationService:
         to map restaurant IDs in recommendations back to full restaurant info.
         """
         return self._repo.get_all()
+
     def get_recommendations(self, preferences: UserPreference) -> List[Recommendation]:
         self._logger.info(
             "Generating recommendations",
             extra={"location": preferences.location, "cuisines": preferences.cuisines},
         )
-        candidates, relaxation_level = self._build_candidates(preferences)
+        candidates = self._build_candidates(preferences)
+        
         # Delegates to Groq LLM client for explanations
-        recommendations = self._llm_client.generate_recommendations(
-            preferences, candidates, relaxation_level=relaxation_level
+        # Note: We pass the tier info to the LLM client by mapping candidates to a (Restaurant, Score) structure
+        # but the LLM Client needs to know the tier for the note. 
+        # For now, we'll keep it simple and just use the individual candidate tier if we refactor LlmClient.
+        recommendations = self._llm_client.generate_recommendations_v2(
+            preferences, candidates
         )
         
-        # Final ranking step: strictly sort by rating (primary) and votes (secondary)
-        # to ensure the most premium/popular choices appear first.
+        # Final ranking step: STRICTLY sort by Tier (primary), then Rating, then Votes
         restaurant_map = {r.id: r for r in self.list_restaurants()}
+        tier_map = {r.id: tier for r, _, tier in candidates}
+        
         recommendations.sort(
             key=lambda r: (
-                restaurant_map[r.restaurant_id].rating or 0.0,
-                restaurant_map[r.restaurant_id].votes or 0
-            ),
-            reverse=True
+                tier_map.get(r.restaurant_id, 99),        # Tier first (Ascending)
+                -(restaurant_map[r.restaurant_id].rating or 0.0), # Rating second (Descending)
+                -(restaurant_map[r.restaurant_id].votes or 0)     # Votes third (Descending)
+            )
         )
         
         self._logger.info("Generated %d recommendations", len(recommendations))

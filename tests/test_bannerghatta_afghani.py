@@ -1,49 +1,53 @@
-import requests
-import json
+import sys
+import os
 
-BASE_URL = "http://127.0.0.1:8000"
+# Add project root to path
+sys.path.append(os.getcwd())
 
-def test_bannerghatta_afghani_transparency():
-    print("\n--- Testing Bannerghatta Road + Afghani Transparency ---")
-    payload = {
-        "location": "Bangalore",
-        "area": "Bannerghatta Road",
-        "cuisines": ["Afghani"],
-        "limit": 3
-    }
+from src.data_access.repository import InMemoryRestaurantRepository
+from src.data_ingestion.hf_client import load_restaurants_from_hf
+from src.domain.models import UserPreference
+from src.services.recommendation_service import RecommendationService
+from src.llm.llm_client import LlmClient
+
+def test_reproduction():
+    print("--- Reproducing Bannerghatta Road Afghani Issue ---")
     
-    response = requests.post(f"{BASE_URL}/recommendations", json=payload)
-    if response.status_code != 200:
-        print(f"FAILED: Backend returned status {response.status_code}")
-        print(response.text)
-        return
-
-    data = response.json()
-    recs = data.get("recommendations", [])
-    print(f"Got {len(recs)} recommendations")
+    # Load real data
+    restaurants = load_restaurants_from_hf(limit=None)
+    repo = InMemoryRestaurantRepository(restaurants)
     
-    EXPECTED_NOTE = "Note: I couldn't find any restaurants serving these specific cuisines in your neighborhood"
+    # We don't need real LLM for this part of the trace
+    llm = LlmClient()
+    service = RecommendationService(repo, llm)
     
-    success = True
-    for rec in recs:
-        rest = rec["restaurant"]
-        explanation = rec["explanation"]
-        print(f"Match: {rest['name']} | Area: {rest['area']} | Cuisines: {rest['cuisines']}")
-        print(f"Explanation Preview: {explanation[:100]}...")
-        
-        # Verify transparency note is present
-        if EXPECTED_NOTE not in explanation:
-            print(f"FAILED: Missing transparency note for {rest['name']}")
-            success = False
-        
-        # Verify it's in Jayanagar (as confirmed by data earlier)
-        if rest["area"].lower() != "jayanagar":
-            print(f"WARNING: Unexpected area {rest['area']} for Afghani cuisine expansion.")
+    # Exact preferences from user report
+    prefs = UserPreference(
+        location="Bangalore",
+        area="Bannerghatta Road",
+        cuisines=["Afghani"],
+        min_rating=4.1,
+        price_max=2000.0,
+        limit=6
+    )
 
-    if success:
-        print("SUCCESS: Bannerghatta Road + Afghani scenario verified with transparency.")
+    print(f"Preferences: {prefs}\n")
+
+    # Trace _build_candidates
+    candidates, level = service._build_candidates(prefs)
+    
+    print(f"Relaxation Level reached: {level}")
+    print(f"Total candidates found: {len(candidates)}")
+    for i, (r, score) in enumerate(candidates):
+        print(f"{i+1}. {r.name} | Rating: {r.rating} | Area: {r.area} | Cuisines: {r.cuisines}")
+
+    # Check if Sofraah (3.8) is in there
+    ids = [r.id for r, _ in candidates]
+    sofraah_matches = [id for id in ids if "sofraah" in id.lower()]
+    if sofraah_matches:
+        print("\n!!! BUG DETECTED: Sofraah (3.8) found in candidates despite 4.1+ alternatives !!!")
     else:
-        print("FAILED: Transparency verification failed.")
+        print("\n[✓] Sofraah (3.8) not in candidates. Logic seems correct on this install.")
 
 if __name__ == "__main__":
-    test_bannerghatta_afghani_transparency()
+    test_reproduction()
