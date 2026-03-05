@@ -74,27 +74,42 @@ class LlmClient:
             
             restaurant, score, tier = res_data
             final_explanation = rec.explanation
-            
-            # Deterministically handle budget phrasing
-            if preferences.price_max and restaurant.average_cost_for_two:
-                if restaurant.average_cost_for_two <= preferences.price_max:
-                    budget_phrase = "This restaurant is within your budget."
-                    if budget_phrase.lower() not in final_explanation.lower():
-                        final_explanation = f"{budget_phrase} {final_explanation}"
 
-            # Safety check: Name mention
-            if restaurant.name.lower() not in final_explanation.lower():
-                final_explanation = f"{restaurant.name} is a great choice because {final_explanation}"
+            # Prepend Tier Note / Handle Fallback Template
+            note = ""
+            if tier in [10, 11, 20]:
+                target_cuisine = preferences.cuisines[0] if preferences.cuisines else (restaurant.cuisines[0] if restaurant.cuisines else "excellent")
+                
+                # Dynamic Template from User
+                note = (
+                    f"We couldn't find any restaurants with your selected cuisine and rating in your exact neighborhood, "
+                    f"so we searched across Bangalore to find the best match. We recommend {restaurant.name} "
+                    f"because it serves {target_cuisine} cuisine you prefer, has a strong rating of {restaurant.rating}, "
+                    f"and fits within your budget."
+                )
+                # If we use this template, we don't need the redundant safety check or budget prefix
+                final_explanation = f"{note} {rec.explanation}"
+            else:
+                # Standard Tiers (0, 1, 2)
+                note = tier_notes.get(tier, "")
+                
+                # Standard Logic: Budget + Name + LLM
+                if preferences.price_max and restaurant.average_cost_for_two:
+                    if restaurant.average_cost_for_two <= preferences.price_max:
+                        budget_phrase = "This restaurant is within your budget."
+                        if budget_phrase.lower() not in final_explanation.lower():
+                            final_explanation = f"{budget_phrase} {final_explanation}"
+
+                if restaurant.name.lower() not in final_explanation.lower():
+                    final_explanation = f"{restaurant.name} is a great choice because {final_explanation}"
+                
+                if note and note not in final_explanation:
+                    final_explanation = f"{note} {final_explanation}"
 
             # Uniqueness handling
             if final_explanation in used_explanations:
                 final_explanation = f"Recommended: {restaurant.name} provides a quality dining experience. {final_explanation}"
             used_explanations.add(final_explanation)
-
-            # Prepend Tier Note
-            note = tier_notes.get(tier, "")
-            if note and note not in final_explanation:
-                final_explanation = f"{note} {final_explanation}"
                 
             merged.append(
                 Recommendation(
