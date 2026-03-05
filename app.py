@@ -188,9 +188,9 @@ else:
     # Welcome View
     st.info("👋 Welcome! Use the sidebar filters to find the perfect restaurant in Bangalore.")
     
-    # Show some trending local spots (Indiranagar)
-    st.markdown("### Trending in Indiranagar")
-    trending_prefs = UserPreference(location="Bangalore", area="Indiranagar", limit=4)
+    # Show some trending local spots (Bangalore)
+    st.markdown("### Trending in Bangalore")
+    trending_prefs = UserPreference(location="Bangalore", area=None, limit=4)
     trending_recs = service.get_recommendations(trending_prefs)
     
     cols = st.columns(2)
