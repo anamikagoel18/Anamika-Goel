@@ -17,7 +17,7 @@ ENV/
 # Local data & caches
 data/
 outputs/
-# .streamlit/ removed to allow cloud deployment config
+.streamlit/
 
 # Node/Frontend (Legacy but good to ignore)
 ui/node_modules/
