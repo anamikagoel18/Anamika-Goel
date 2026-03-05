@@ -64,6 +64,7 @@ class LlmClient:
         }
 
         candidate_lookup = {r.id: (r, score, tier) for r, score, tier in candidates}
+        has_local_matches = any(t < 10 for _, _, t in candidates)
         merged: List[Recommendation] = []
         used_explanations = set()
 
@@ -77,10 +78,15 @@ class LlmClient:
             if tier in [10, 11, 20]:
                 target_cuisine = preferences.cuisines[0] if preferences.cuisines else (restaurant.cuisines[0] if restaurant.cuisines else "various")
                 
-                # Dynamic Template from User
+                # Contextual Prefix
+                if has_local_matches:
+                    prefix = "To give you more top-rated options beyond your neighborhood, we searched across Bangalore."
+                else:
+                    prefix = "We couldn't find any restaurants with your selected cuisine and rating in your exact neighborhood, so we searched across Bangalore to find the best match."
+
+                # Dynamic Template
                 final_explanation = (
-                    f"We couldn't find any restaurants with your selected cuisine and rating in your exact neighborhood, "
-                    f"so we searched across Bangalore to find the best match. We recommend {restaurant.name} because it "
+                    f"{prefix} We recommend {restaurant.name} because it "
                     f"serves {target_cuisine} cuisine you prefer, has a strong rating of {restaurant.rating}, "
                     f"and fits within your budget."
                 )
@@ -121,9 +127,14 @@ class LlmClient:
             for r, score, tier in candidates:
                 if tier in [10, 11, 20]:
                     target_cuisine = preferences.cuisines[0] if preferences.cuisines else (r.cuisines[0] if r.cuisines else "various")
+                    
+                    if has_local_matches:
+                        prefix = "To give you more top-rated options beyond your neighborhood, we searched across Bangalore."
+                    else:
+                        prefix = "We couldn't find any restaurants with your selected cuisine and rating in your exact neighborhood, so we searched across Bangalore to find the best match."
+
                     final_fallback = (
-                        f"We couldn't find any restaurants with your selected cuisine and rating in your exact neighborhood, "
-                        f"so we searched across Bangalore to find the best match. We recommend {r.name} because it "
+                        f"{prefix} We recommend {r.name} because it "
                         f"serves {target_cuisine} cuisine you prefer, has a strong rating of {r.rating}, "
                         f"and fits within your budget."
                     )
