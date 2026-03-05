@@ -52,11 +52,12 @@ class RecommendationService:
                 tier_priority = {
                     "none": 0, 
                     "price": 1, 
-                    "rating": 2, 
-                    "area": 3, 
-                    "area_price": 4, 
-                    "area_relaxed": 5, 
-                    "neighborhood": 6
+                    "area": 2, 
+                    "area_price": 3, 
+                    "neighborhood_favorites": 4,
+                    "neighborhood_favorites_price": 5,
+                    "global_favorites": 6,
+                    "rating_relaxed": 7
                 }
                 if tier_priority.get(level, 0) > tier_priority.get(highest_relaxation, 0):
                     highest_relaxation = level
@@ -65,10 +66,8 @@ class RecommendationService:
         # Pre-calculate relaxed values
         orig_price = preferences.price_max
         relaxed_price = orig_price * 1.5 if orig_price else None
-        orig_rating = preferences.min_rating
-        relaxed_rating = max(0, orig_rating - 0.5) if orig_rating else None
 
-        # 1. Local Strict
+        # 1. Local Strict (Neighborhood, Cuisine, Price, Rating)
         filtered = filter_restaurants(restaurants, preferences)
         add_unique_candidates(filtered, "none")
         if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
@@ -79,36 +78,37 @@ class RecommendationService:
             add_unique_candidates(filter_restaurants(restaurants, p2), "price")
             if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # 3. Local Rating Relaxed
-        if relaxed_rating:
-            p3 = preferences.model_copy(update={"price_max": relaxed_price, "min_rating": relaxed_rating})
-            add_unique_candidates(filter_restaurants(restaurants, p3), "rating")
-            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
-
-        # 4. City-wide Strict
-        p4 = preferences.model_copy(update={"area": None})
-        add_unique_candidates(filter_restaurants(restaurants, p4), "area")
+        # 3. City-wide Strict
+        p3 = preferences.model_copy(update={"area": None})
+        add_unique_candidates(filter_restaurants(restaurants, p3), "area")
         if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # 5. City-wide Price Relaxed
+        # 4. City-wide Price Relaxed
         if relaxed_price:
-            p5 = preferences.model_copy(update={"area": None, "price_max": relaxed_price})
-            add_unique_candidates(filter_restaurants(restaurants, p5), "area_price")
+            p4 = preferences.model_copy(update={"area": None, "price_max": relaxed_price})
+            add_unique_candidates(filter_restaurants(restaurants, p4), "area_price")
             if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # 6. City-wide Rating Relaxed (Cuisine is the only anchor left)
-        p6 = preferences.model_copy(update={"area": None, "price_max": relaxed_price, "min_rating": relaxed_rating})
-        add_unique_candidates(filter_restaurants(restaurants, p6), "area_relaxed")
+        # 5. Neighborhood Favorites (Neighborhood, Any Cuisine, Strict Price, Strict Rating)
+        p5 = preferences.model_copy(update={"cuisines": []})
+        add_unique_candidates(filter_restaurants(restaurants, p5), "neighborhood_favorites")
         if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
 
-        # 7. Neighborhood Fallback (Any Cuisine)
-        p7 = preferences.model_copy(update={"cuisines": []})
-        filtered = filter_restaurants(restaurants, p7)
-        if not filtered:
-            # Absolute fallback if neighborhood favoritos are also restricted
-            p7_alt = UserPreference(location="Bangalore", area=preferences.area, limit=preferences.limit)
-            filtered = filter_restaurants(restaurants, p7_alt)
-        add_unique_candidates(filtered, "neighborhood")
+        # 6. Neighborhood Favorites Price Relaxed (Neighborhood, Any Cuisine, Relaxed Price, Strict Rating)
+        if relaxed_price:
+            p6 = preferences.model_copy(update={"cuisines": [], "price_max": relaxed_price})
+            add_unique_candidates(filter_restaurants(restaurants, p6), "neighborhood_favorites_price")
+            if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+
+        # 7. Global Favorites (City-wide, Any Cuisine, Strict Price, Strict Rating)
+        p7 = preferences.model_copy(update={"area": None, "cuisines": []})
+        add_unique_candidates(filter_restaurants(restaurants, p7), "global_favorites")
+        if len(candidates) >= threshold: return candidates[:preferences.limit], highest_relaxation
+
+        # 8. Last Resort (Global Relaxed Rating - drop constraints to find anything)
+        low_rating = max(0, (preferences.min_rating or 4.0) - 1.0)
+        p8 = preferences.model_copy(update={"area": None, "cuisines": [], "price_max": relaxed_price, "min_rating": low_rating})
+        add_unique_candidates(filter_restaurants(restaurants, p8), "rating_relaxed")
 
         return candidates[:preferences.limit], highest_relaxation
 

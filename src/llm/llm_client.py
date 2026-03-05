@@ -59,19 +59,23 @@ class LlmClient:
         relaxation_note = ""
         if relaxation_level == "price":
             relaxation_note = "Note: We slightly relaxed your price range to find these great options."
-        elif relaxation_level == "rating":
-            relaxation_note = "Note: We slightly relaxed the minimum rating to find matches in this neighborhood."
         elif relaxation_level == "area":
             relaxation_note = "Note: I couldn't find any restaurants serving these specific cuisines in your neighborhood, so I looked in nearby areas of Bangalore to find you the best matches."
         elif relaxation_level == "area_price":
             relaxation_note = "Note: I couldn't find matches for this cuisine within your exact budget or neighborhood, so I looked in nearby areas with slightly relaxed pricing."
-        elif relaxation_level == "area_relaxed":
-            relaxation_note = "Note: I couldn't find matches for this cuisine within your exact criteria or neighborhood, so I've found the best options available elsewhere in Bangalore."
-        elif relaxation_level == "neighborhood":
+        elif relaxation_level == "neighborhood_favorites":
             relaxation_note = "Note: I couldn't find an exact match for your cuisines here, so I've hand-picked the top-rated local favorites in your area that match your other preferences."
+        elif relaxation_level == "neighborhood_favorites_price":
+            relaxation_note = "Note: I've found the best-rated local favorites near you, with a slight adjustment to the budget to ensure quality options."
+        elif relaxation_level == "global_favorites":
+            relaxation_note = "Note: I've looked across all of Bangalore to find the highest-rated restaurants that fit your budget and general preferences."
+        elif relaxation_level == "rating_relaxed":
+            relaxation_note = "Note: I've expanded the search to find the best available matches across Bangalore, relaxing some criteria to ensure you have good options to choose from."
 
         candidate_lookup = {r.id: (r, score) for r, score in candidates}
         merged: List[Recommendation] = []
+        used_explanations = set()
+
         for rec in recs_from_llm:
             res_data = candidate_lookup.get(rec.restaurant_id)
             if not res_data:
@@ -87,6 +91,16 @@ class LlmClient:
                     if budget_phrase.lower() not in final_explanation.lower():
                         final_explanation = f"{budget_phrase} {final_explanation}"
 
+            # Safety check: Ensure the explanation is unique and mentions the name
+            if restaurant.name.lower() not in final_explanation.lower():
+                final_explanation = f"{restaurant.name} is a great choice because {final_explanation}"
+
+            # Prevent duplicate explanations (Misattribution Fix)
+            if final_explanation in used_explanations:
+                final_explanation = f"Recommended: {restaurant.name} provides a unique dining experience that fits your criteria. {final_explanation}"
+            
+            used_explanations.add(final_explanation)
+
             # Deterministically prepend the relaxation note if it's not already there
             if relaxation_note and relaxation_note not in final_explanation:
                 final_explanation = f"{relaxation_note} {final_explanation}"
@@ -100,30 +114,31 @@ class LlmClient:
             )
 
         # Fallback: if the LLM didn't return any valid recommendations, just
-        # surface the top N candidates with a generic explanation so the user
-        # always sees something.
+        # surface the top N candidates with a generic explanation
         if not merged:
-            base_fallback = "Top match based on your location and preferences."
-            if relaxation_level == "price":
-                base_fallback = "Slightly relaxed your price range to find these great options."
-            elif relaxation_level == "rating":
-                base_fallback = "Slightly relaxed the minimum rating to find matches in this area."
-            elif relaxation_level == "neighborhood":
-                base_fallback = "Found the best local alternatives since your exact cuisine wasn't available."
-            
-            # Ensure transparency note is present even in non-LLM fallback
-            final_fallback = base_fallback
-            if relaxation_note and relaxation_note not in final_fallback:
-                final_fallback = f"{relaxation_note} {base_fallback}"
+            merged = []
+            for r, score in candidates:
+                base_fallback = f"{r.name} is a top match based on your location and preferences."
+                if relaxation_level == "price":
+                    base_fallback = f"We slightly relaxed your price range to find {r.name} for you."
+                elif "neighborhood_favorites" in relaxation_level:
+                    base_fallback = f"Since your exact cuisine wasn't available, we found {r.name} as a top-rated local alternative."
+                elif relaxation_level == "global_favorites":
+                    base_fallback = f"I've identified {r.name} as one of the best available options across Bangalore."
+                
+                final_fallback = base_fallback
+                if relaxation_note and relaxation_note not in final_fallback:
+                    final_fallback = f"{relaxation_note} {base_fallback}"
 
-            merged = [
-                Recommendation(
-                    restaurant_id=r.id,
-                    score=score,
-                    explanation=final_fallback,
+                merged.append(
+                    Recommendation(
+                        restaurant_id=r.id,
+                        score=score,
+                        explanation=final_fallback,
+                    )
                 )
-                for r, score in candidates
-            ]
+
+        return merged
 
         return merged
 
